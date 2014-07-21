@@ -1,0 +1,146 @@
+#include <avr/io.h>
+#define read 1
+#define write 0
+#define RA_WHO_AM_I 	       117 
+
+#define F_CPU 7372800// Clock Speed
+#define BAUD 2400
+#define MYUBRR (F_CPU/16/BAUD)-1
+
+char receive_data;
+
+void TWI_init_BitRate(char TWBRValue,char PrescalerValue) // Function to initialize frequency and prescalervalue
+{
+	TWBR=TWBRValue;    // Bit rate ---- SCL freq= F_CPU/(16+2(TWBR).4^TWPS)
+	if (PrescalerValue == 1) TWSR=(0<<TWPS1)|(0<<TWPS0); // Setting prescalar bits (TWPS) to 1
+  if (PrescalerValue == 4) TWSR=(0<<TWPS1)|(1<<TWPS0); // Setting prescalar bits (TWPS) to 4
+	if (PrescalerValue == 16) TWSR=(1<<TWPS1)|(0<<TWPS0); // Setting prescalar bits (TWPS) to 16
+	if (PrescalerValue == 64) TWSR=(1<<TWPS1)|(1<<TWPS0); // Setting prescalar bits (TWPS) to 64
+}
+
+void TWI_start(void)
+{
+	//Clear TWI interrupt flag (TWINT)by writing a logic 1 to it,Put start condition on SDA I/O PORTS, Enable TWI (TWEN)
+  TWCR= (1<<TWINT)|(1<<TWSTA)|(1<<TWEN);
+	while(!(TWCR & (1<<TWINT))); // Wait till start condition is transmitted
+	while((TWSR & 0xF8)!= 0x08); // Check for the acknowledgement the 5 higher bit of TWSR register checked (0xF8)---0x08 for start in Master transmitter mod
+}
+
+void TWI_repetitive_start(void)
+{
+	//Clear TWI interrupt flag (TWINT)by writing a logic 1 to it,Put start condition on SDA I/O PORTS, Enable TWI (TWEN)
+	TWCR= (1<<TWINT)|(1<<TWSTA)|(1<<TWEN);
+	while(!(TWCR & (1<<TWINT))); // Wait till start condition is transmitted
+	while((TWSR & 0xF8)!= 0x10); // Check for the acknowledgement the 5 higher bit of TWSR register checked (0xF8)---0x10 for repetitive start in Master transmitter mod
+}
+
+void TWI_write_address(unsigned char Address)// address must have 8 bit,7bit for address and 0 bit for data direction bit (write)
+{
+	TWDR=Address;    // Address and write instruction
+	TWCR=(1<<TWINT)|(1<<TWEN);    // Clear TWI interrupt flag,Enable TWI
+	while (!(TWCR & (1<<TWINT))); // Wait till complete TWDR byte sended
+	while((TWSR & 0xF8)!= 0x18);  // Check for the acknoledgement when 0x18 occured the SLAVE address transmited with write bit and waiting for ack 
+}
+
+void TWI_write_data(unsigned char data)
+{
+	TWDR=data;    // put data in TWDR 8 bits = 7 bit slave address + Data direction bit (write = 0)
+	TWCR=(1<<TWINT)|(1<<TWEN);    // Clear TWI interrupt flag,Enable TWI
+	while (!(TWCR & (1<<TWINT))); // Wait till complete TWDR byte transmitted
+	while((TWSR & 0xF8) != 0x28); // Check for the acknoledgement--- 0x28 it means data has been transmitted and akn received to master 
+}
+
+void TWI_stop(void)
+{
+	// Clear TWI interrupt flag, Put stop condition on SDA (TWSTO), Enable TWI
+	TWCR= (1<<TWINT)|(1<<TWEN)|(1<<TWSTO);
+	while(!(TWCR & (1<<TWSTO)));  // Wait till stop condition is transmitted 
+	//there is no need to check the TWSR value
+}
+                   /////////////////////////////////////////////////////////////
+///////////////////////////////MASTER becomes a receiver mode /////////////////////////////////////////
+                   /////////////////////////////////////////////////////////////
+				   
+void TWI_read_address(unsigned char Address)// address must have 8 bit,7bit for address and 1 bit for data direction bit (read)
+{
+	TWDR=Address;    // Address and read instruction
+	TWCR=(1<<TWINT)|(1<<TWEN);    // Clear TWI interrupt flag,Enable TWI
+	while (!(TWCR & (1<<TWINT))); // Wait till complete TWDR byte received
+	while((TWSR & 0xF8)!= 0x40);  // Check for the acknoledgement ,0x40 it means when the Slave address transmitted in read mode
+}			
+
+void TWI_read_data(char continue_or_not)
+{
+	TWCR=(1<<TWINT)|(1<<TWEN);    // Clear TWI interrupt flag,Enable TWI
+	while (!(TWCR & (1<<TWINT))); // Wait till complete TWDR byte transmitted
+	if (continue_or_not == 0) while((TWSR & 0xF8) != 0x58);
+	if (continue_or_not == 1) while((TWSR & 0xF8) != 0x50); 
+	receive_data=TWDR;
+}	   
+
+unsigned char MPU6050_Test_I2C()
+{
+	TWI_init_BitRate(0x01,1);
+	TWI_start();
+  TWI_write_address(0xD0);	
+	TWI_write_data(RA_WHO_AM_I);
+	TWI_stop();
+	TWI_start();
+	TWI_read_address(0xD0 + 1);
+	TWI_read_data(0);
+	return receive_data;
+}
+
+void USART_Init( unsigned int ubrr)
+{
+	/* Set baud rate */
+	UBRRH = (unsigned char)(ubrr>>8);
+	UBRRL = (unsigned char)ubrr;
+	/* Enable receiver and transmitter */
+	UCSRB = (1<<RXEN)|(1<<TXEN);
+	/* Set frame format: 8data, 2stop bit */
+	UCSRC = (1<<URSEL)|(1<<USBS)|(3<<UCSZ0);
+}
+
+void USART_Transmit( unsigned char data )
+{
+	/* Wait for empty transmit buffer */
+	while ( !( UCSRA & (1<<UDRE)) );
+	/* Put data into buffer, sends the data */
+	UDR = data;
+}
+
+
+unsigned char MPU_TEST()
+{
+	unsigned char Data = 0x00;
+	Data=MPU6050_Test_I2C();
+	if(Data == 0x68)
+	   return 1;       // Means Comunication With MPU6050 is Corect
+	else
+	   return 0;
+}
+
+int main(void){
+		USART_Init ( MYUBRR );
+		while(1){
+			if (MPU_TEST())
+			{
+				USART_Transmit('h');
+				USART_Transmit('e');
+				USART_Transmit('l');
+				USART_Transmit('l');
+				USART_Transmit('o');
+			}
+			else
+			{
+				USART_Transmit('e');
+				USART_Transmit('r');
+				USART_Transmit('r');
+				USART_Transmit('o');
+				USART_Transmit('r');
+				
+			}
+
+		}
+}
