@@ -1,0 +1,16 @@
+void integral_gyro_timer(){
+	      sei();
+	      TCCR0 |= 1<<WGM01 | 1<<WGM00; //no prescaling and mode : fast PWM
+	      TIMSK |= 1<<TOIE0; //Overflow interrupt enable 
+	
+	      GYRO_XOUT=(MPU6050_Read_I2C(0x01,1,GYRO_XOUT_H,0xD0,0x00)<<8|MPU6050_Read_I2C(0x01,1,GYRO_XOUT_L,0xD0,0x00));
+	      GYRO_YOUT=(MPU6050_Read_I2C(0x01,1,GYRO_YOUT_H,0xD0,0x00)<<8|MPU6050_Read_I2C(0x01,1,GYRO_YOUT_L,0xD0,0x00));
+	      GYRO_ZOUT=(MPU6050_Read_I2C(0x01,1,GYRO_ZOUT_H,0xD0,0x00)<<8|MPU6050_Read_I2C(0x01,1,GYRO_ZOUT_L,0xD0,0x00));
+
+}
+
+ISR(TIMER0_OVF_vect){
+  GYRO_XOUT+=(GYRO_XOUT-GYRO_XOUT_OFFSET);
+  GYRO_YOUT+=(GYRO_YOUT-GYRO_YOUT_OFFSET);
+  GYRO_ZOUT+=(GYRO_ZOUT-GYRO_ZOUT_OFFSET);
+}
