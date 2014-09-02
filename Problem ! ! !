@@ -1,0 +1,176 @@
+
+#include <avr/io.h>
+#include <stdio.h>
+#define read 1
+#define write 0
+#define RA_WHO_AM_I 	       117
+#define off 0
+#define on 1
+
+#define GYRO_XOUT_H 0x43 
+#define GYRO_XOUT_L 0x44 
+
+
+#define F_CPU 7372800// Clock Speed
+#define BAUD 2400
+#define MYUBRR (F_CPU/16/BAUD)-1
+
+char receive_data;
+
+#define SCL_CLOCK  100000L
+
+double GYRO_XOUT;
+
+
+
+void TWI_init_BitRate(char PrescalerValue) // Function to initialize frequency and prescalervalue
+{
+	TWBR = ((F_CPU/SCL_CLOCK)-16)/2;  /* must be > 10 for stable operation */
+	if (PrescalerValue == 1) TWSR=(0<<TWPS1)|(0<<TWPS0); // Setting prescalar bits (TWPS) to 1
+	if (PrescalerValue == 4) TWSR=(0<<TWPS1)|(1<<TWPS0); // Setting prescalar bits (TWPS) to 4
+	if (PrescalerValue == 16) TWSR=(1<<TWPS1)|(0<<TWPS0); // Setting prescalar bits (TWPS) to 16
+	if (PrescalerValue == 64) TWSR=(1<<TWPS1)|(1<<TWPS0); // Setting prescalar bits (TWPS) to 64
+}
+
+unsigned char TWI_start(void)
+{
+	//Clear TWI interrupt flag (TWINT)by writing a logic 1 to it,Put start condition on SDA I/O PORTS, Enable TWI (TWEN)
+	TWCR= (1<<TWINT)|(1<<TWSTA)|(1<<TWEN);
+	while(!(TWCR & (1<<TWINT))); // Wait till start condition is transmitted
+	if (((TWSR & 0xF8)!= 0x08) && ((TWSR & 0xF8)!= 0x10)) return 1; // Check for the acknowledgement the 5 higher bit of TWSR register checked (0xF8)---0x08 for start in Master transmitter mod
+	return 0;
+}
+
+void TWI_repetitive_start(void)
+{
+	//Clear TWI interrupt flag (TWINT)by writing a logic 1 to it,Put start condition on SDA I/O PORTS, Enable TWI (TWEN)
+	TWCR= (1<<TWINT)|(1<<TWSTA)|(1<<TWEN);
+	while(!(TWCR & (1<<TWINT))); // Wait till start condition is transmitted
+	while((TWSR & 0xF8)!= 0x10); // Check for the acknowledgement the 5 higher bit of TWSR register checked (0xF8)---0x10 for repetitive start in Master transmitter mod
+}
+
+unsigned char TWI_write_address(unsigned char Address)// address must have 8 bit,7bit for address and 0 bit for data direction bit (write)
+{
+	TWDR=Address;    // Address and write instruction
+	TWCR=(1<<TWINT)|(1<<TWEN);    // Clear TWI interrupt flag,Enable TWI
+	while (!(TWCR & (1<<TWINT))); // Wait till complete TWDR byte sended
+	if (((TWSR & 0xF8)!= 0x18) && ((TWSR & 0xF8)!= 0x40)) return 1; // Check for the acknoledgement when 0x18 occured the SLAVE address transmited with write bit and waiting for ack
+	return 0;
+}
+
+void TWI_write_data(unsigned char data)
+{
+	TWDR=data;    // put data in TWDR 8 bits = 7 bit slave address + Data direction bit (write = 0)
+	TWCR=(1<<TWINT)|(1<<TWEN);    // Clear TWI interrupt flag,Enable TWI
+	while (!(TWCR & (1<<TWINT))); // Wait till complete TWDR byte transmitted
+	while((TWSR & 0xF8) != 0x28); // Check for the acknoledgement--- 0x28 it means data has been transmitted and akn received to master
+}
+
+void TWI_stop(void)
+{
+	// Clear TWI interrupt flag, Put stop condition on SDA (TWSTO), Enable TWI
+	TWCR= (1<<TWINT)|(1<<TWEN)|(1<<TWSTO);
+	while(!(TWCR & (1<<TWSTO)));  // Wait till stop condition is transmitted
+	//there is no need to check the TWSR value
+}
+
+void TWI_start_polling(unsigned char Address)
+{
+	while ( 1 )
+	{
+		// send START condition
+		TWCR = (1<<TWINT) | (1<<TWSTA) | (1<<TWEN);
+		// wait until transmission completed
+		while(!(TWCR & (1<<TWINT)));
+		
+		// check value of TWI Status Register. Mask prescaler bits.
+		if (((TWSR & 0xF8) != 0x08) && ((TWSR & 0xF8) != 0x10)) continue;
+		// send device address
+		TWDR = Address;
+		TWCR = (1<<TWINT) | (1<<TWEN);
+		// wail until transmission completed
+		while(!(TWCR & (1<<TWINT)));
+		
+		// check value of TWI Status Register for notack .
+		if ( ((TWSR & 0xF8) == 0x20)||((TWSR & 0xF8) == 0x58))
+		{
+			/* device busy, send stop condition to terminate write operation */
+			TWCR = (1<<TWINT) | (1<<TWEN) | (1<<TWSTO);
+			// wait until stop condition is executed and bus released
+			while(TWCR & (1<<TWSTO));
+			continue;
+		}
+		//if( twst != TW_MT_SLA_ACK) return 1;
+		break;
+	}
+}
+/////////////////////////////////////////////////////////////
+///////////////////////////////MASTER becomes a receiver mode /////////////////////////////////////////
+/////////////////////////////////////////////////////////////
+
+void TWI_read_address(unsigned char Address)// address must have 8 bit,7bit for address and 1 bit for data direction bit (read)
+{
+	TWDR=Address;    // Address and read instruction
+	TWCR=(1<<TWINT)|(1<<TWEN);    // Clear TWI interrupt flag,Enable TWI
+	while (!(TWCR & (1<<TWINT))); // Wait till complete TWDR byte received
+	while((TWSR & 0xF8)!= 0x40);  // Check for the acknoledgement ,0x40 it means when the Slave address transmitted in read mode
+}
+
+unsigned char TWI_read_data(void)
+{
+	 TWCR = (1<<TWINT) | (1<<TWEN) | (1<<TWEA);
+     while(!(TWCR & (1<<TWINT)));
+	 return TWDR;
+}
+
+
+unsigned char MPU6050_Read_I2C(char PrescalerValue,char Register_name,char MPU6050_Address){
+		TWI_init_BitRate(PrescalerValue);   // I2C Init
+		TWI_start_polling(MPU6050_Address+write); // set device address and write mode
+		TWI_write_data(Register_name);      // Write the register
+		TWI_start();                       // repeated start
+		TWI_write_address(MPU6050_Address+read);      // set device address and read mode
+		receive_data =TWI_read_data();     // read one byte
+		TWI_stop();
+		return receive_data;
+}
+
+void USART_Init( unsigned int ubrr)
+{
+	/* Set baud rate */
+	UBRRH = (unsigned char)(ubrr>>8);
+	UBRRL = (unsigned char)ubrr;
+	/* Enable receiver and transmitter */
+	UCSRB = (1<<RXEN)|(1<<TXEN);
+	/* Set frame format: 8data, 2stop bit */
+	UCSRC = (1<<URSEL)|(1<<USBS)|(3<<UCSZ0);
+}
+
+static int uart_putchar(char c, FILE *stream);
+
+static FILE mystdout = FDEV_SETUP_STREAM(uart_putchar, NULL,_FDEV_SETUP_WRITE);
+
+static int uart_putchar(char c, FILE *stream)
+{
+
+	if (c == '\n')
+	uart_putchar('\r', stream);
+	loop_until_bit_is_set(UCSRA, UDRE);
+	UDR = c;
+	return 0;
+}
+
+
+
+int main(void)
+{
+	
+	USART_Init(MYUBRR );
+	char buff[100];
+	stdout = &mystdout;
+	while(1){
+    GYRO_XOUT=(MPU6050_Read_I2C(1,GYRO_XOUT_H,0xD0)<<8|MPU6050_Read_I2C(1,GYRO_XOUT_L,0xD0));
+		sprintf(buff,"%f",GYRO_XOUT);
+		puts(buff);
+	}
+}
