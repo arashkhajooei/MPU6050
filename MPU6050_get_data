@@ -1,0 +1,138 @@
+/*
+ * TEST_UART.c
+ *
+ * Created: 9/3/2014 4:38:30 AM
+ *  Author: Arash
+ */ 
+
+
+#include <avr/io.h>
+#include <stdio.h>
+#include "i2cmaster.h"
+
+
+#define F_CPU 7372800// Clock Speed
+#define BAUD 9600
+#define MYUBRR (F_CPU/16/BAUD)-1
+
+#include <util/delay.h>
+
+#define CONFIG 0x1A 
+#define SMPLRT_DIV 0x19
+#define ACCEL_CONFIG 0x1C 
+#define GYRO_CONFIG 0x1B 
+#define GYRO_XOUT_L 0x44 
+#define GYRO_XOUT_H 0x43 
+#define GYRO_XOUT_L 0x44
+#define ACCEL_XOUT_H 59 
+#define ACCEL_XOUT_L 60
+#define WHO_AM_I  117
+#define TEMP_OUT_H 	       0x41  
+#define TEMP_OUT_L 	       0x42  
+#define PWR_MGMT_1    0x6B
+ 
+void USART_Init( unsigned int ubrr)
+{
+	/* Set baud rate */
+	UBRRH = (unsigned char)(ubrr>>8);
+	UBRRL = (unsigned char)ubrr;
+	/* Enable receiver and transmitter */
+	UCSRB = (1<<TXEN);
+	/* Set frame format: 8data, 2stop bit */
+	UCSRC = (1<<URSEL)|(1<<USBS)|(3<<UCSZ0);
+}
+
+
+static int uart_putchar(char c, FILE *stream);
+
+static FILE mystdout = FDEV_SETUP_STREAM(uart_putchar, NULL,_FDEV_SETUP_WRITE);
+
+static int uart_putchar(char c, FILE *stream)
+{
+
+	if (c == '\n')
+	uart_putchar('\r', stream);
+	loop_until_bit_is_set(UCSRA, UDRE);
+	UDR = c;
+	return 0;
+}
+
+volatile uint16_t accel_X_axis;
+volatile char DATA;
+volatile char DATA2;
+volatile double double_data;
+
+void mpu_test(){
+	 i2c_init();
+	 i2c_start_wait(0xD0+0);     // set device address and write mode
+	 i2c_write(PWR_MGMT_1);
+	 i2c_write(0x00);
+	 i2c_stop();
+	 i2c_init();
+	 i2c_start_wait(0xD0+0);     // set device address and write mode
+	 i2c_write(SMPLRT_DIV);
+	 i2c_write(0x00);
+	 i2c_stop();
+	 i2c_init();
+	 i2c_start_wait(0xD0+0);     // set device address and write mode
+	 i2c_write(CONFIG);
+	 i2c_write(0x00);
+	 i2c_stop();
+	 i2c_init();
+	 i2c_start_wait(0xD0+0);     // set device address and write mode
+	 i2c_write(ACCEL_CONFIG);
+	 i2c_write(0x18);
+	 i2c_stop();
+	 i2c_init();
+	 i2c_start_wait(0xD0+0);     // set device address and write mode
+	 i2c_write(GYRO_CONFIG);
+	 i2c_write(0x18);
+	 i2c_stop();
+	 
+}
+
+unsigned char get1 (){
+	 i2c_init();
+	 i2c_start(0xD0+I2C_WRITE);     // set device address and write mode
+	 i2c_write(TEMP_OUT_H);                        // write address = 5
+	 i2c_rep_start(0xD0+I2C_READ);       // set device address and read mode
+	 DATA = i2c_readNak();                    // read one byte
+	 i2c_stop();
+	 return DATA;
+}
+
+unsigned char get2 (){
+     i2c_init();
+     i2c_start(0xD0+I2C_WRITE);     // set device address and write mode
+     i2c_write(TEMP_OUT_L);                        // write address = 5
+     i2c_rep_start(0xD0+I2C_READ);       // set device address and read mode
+     DATA2 = i2c_readNak();                    // read one byte
+     i2c_stop();
+     return DATA2;
+}
+
+
+
+
+uint16_t ACCEL(){
+    accel_X_axis = (get1()<<8|get2());
+	PORTB ^=1<<PINB0;
+	return accel_X_axis;
+}
+
+
+int main(void)
+{
+	USART_Init(MYUBRR );
+	DDRB |=(1<<PINB0)|(1<<PINB1);
+	char buff[20];
+	mpu_test();
+	stdout = &mystdout;
+	while(1){
+		double_data=ACCEL();
+		sprintf(buff,"%5.5f",double_data);
+		puts(buff);
+	}
+}
+
+
